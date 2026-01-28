@@ -10,5 +10,17 @@
     "discord.js": "^14.0.0",
     "dotenv": "^16.0.0",
     "mineflayer": "^4.0.0"
-  }
+  },
+  "description": "**MineCord** is an open-source Discord ↔ Minecraft bridge bot built with **Node.js**, **discord.js**, and **Mineflayer**.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itz-me-fisherYT/MineCord.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/itz-me-fisherYT/MineCord/issues"
+  },
+  "homepage": "https://github.com/itz-me-fisherYT/MineCord#readme"
 }
