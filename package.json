@@ -1,0 +1,14 @@
+{
+  "name": "minecord",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.0.0",
+    "dotenv": "^16.0.0",
+    "mineflayer": "^4.0.0"
+  }
+}
