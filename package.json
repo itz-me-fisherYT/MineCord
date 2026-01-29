@@ -4,12 +4,14 @@
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
+    "dev": "nodemon src/index.js",
     "start": "node src/index.js"
   },
   "dependencies": {
-    "discord.js": "^14.0.0",
-    "dotenv": "^16.0.0",
-    "mineflayer": "^4.0.0"
+    "discord.js": "^14.25.1",
+    "dotenv": "^16.6.1",
+    "mineflayer": "^4.34.0",
+    "p-queue": "^9.1.0"
   },
   "description": "**MineCord** is an open-source Discord ↔ Minecraft bridge bot built with **Node.js**, **discord.js**, and **Mineflayer**.",
   "repository": {
@@ -22,5 +24,8 @@
   "bugs": {
     "url": "https://github.com/itz-me-fisherYT/MineCord/issues"
   },
-  "homepage": "https://github.com/itz-me-fisherYT/MineCord#readme"
+  "homepage": "https://github.com/itz-me-fisherYT/MineCord#readme",
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
 }
