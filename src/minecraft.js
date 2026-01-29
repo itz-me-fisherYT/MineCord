@@ -1,11 +1,10 @@
 const mineflayer = require("mineflayer");
 
-function startMinecraft({ host, port, username, auth, version, name }) {
+function startMinecraft({ host, port, username, auth, version, name, autoConnect = true }) {
   let bot = null;
   let stopping = false;
   let retryTimer = null;
 
-  // Status state
   const state = {
     name: name || "bot",
     host,
@@ -77,16 +76,14 @@ function startMinecraft({ host, port, username, auth, version, name }) {
     bot.once("spawn", () => {
       state.connectedAt = Date.now();
       setPhase("connected");
-      console.log(`[MC] ${label()} Spawned in!`);
+      console.log(`[MC] ${label()} Connected to ${host}:${port}`);
       emit({ type: "status", text: `[MC] ${label()} Connected to ${host}:${port}` });
     });
 
-    // Keep prefixes/system messages
     bot.on("messagestr", (message) => {
       emit({ type: "chat", text: message });
     });
 
-    // Resource pack handshake (safe)
     bot.on("resourcePack", (url, hash) => {
       console.log(`[MC] ${label()} Resource pack requested: ${url}`);
       try {
@@ -123,11 +120,14 @@ function startMinecraft({ host, port, username, auth, version, name }) {
       console.warn(`[MC] ${label()} Disconnected.`);
       emit({ type: "status", text: "⚠️ Disconnected." });
 
+      // Allow clean re-start
+      bot = null;
+
       if (!stopping) scheduleReconnect();
     });
   }
 
-  // Reconnect manager (per bot)
+  // Reconnect manager
   let retryMs = 2000;
   function scheduleReconnect() {
     clearRetry();
@@ -161,7 +161,16 @@ function startMinecraft({ host, port, username, auth, version, name }) {
     } catch {}
   }
 
-  // Manual controls
+  function start() {
+    stopping = false;
+    clearRetry();
+
+    if (state.phase === "connected" || state.phase === "connecting") return;
+
+    retryMs = 2000;
+    connect();
+  }
+
   function reconnectNow() {
     stopping = false;
     clearRetry();
@@ -171,6 +180,10 @@ function startMinecraft({ host, port, username, auth, version, name }) {
     connect();
   }
 
+  function isRunning() {
+    return state.phase === "connected" || state.phase === "connecting";
+  }
+
   function getStatus() {
     const now = Date.now();
     const upFor =
@@ -178,10 +191,7 @@ function startMinecraft({ host, port, username, auth, version, name }) {
         ? Math.max(0, now - state.connectedAt)
         : 0;
 
-    return {
-      ...state,
-      upForMs: upFor
-    };
+    return { ...state, upForMs: upFor };
   }
 
   function onEvent(fn) {
@@ -189,13 +199,16 @@ function startMinecraft({ host, port, username, auth, version, name }) {
     return () => listeners.delete(fn);
   }
 
-  connect();
+  if (autoConnect) start();
+  else setPhase("idle");
 
   return {
     onEvent,
     sendChat,
     stop,
+    start,
     reconnectNow,
+    isRunning,
     getStatus
   };
 }
