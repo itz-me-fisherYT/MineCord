@@ -11,7 +11,7 @@ function mustGetEnv(key) {
 }
 
 async function main() {
-  // Validate config early
+  // Validate required config
   mustGetEnv("DISCORD_TOKEN");
   mustGetEnv("DISCORD_CHANNEL_ID");
   mustGetEnv("MC_HOST");
