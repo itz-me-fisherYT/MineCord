@@ -1,24 +1,31 @@
-function createBridge({ discord, mc }) {
-  // Relay Minecraft -> Discord
-  mc.onEvent(async (evt) => {
-    if (evt.type === "chat") {
-      // You can add filters here later
-      await discord.sendToChannel(`🟩 ${evt.text}`);
-    } else if (evt.type === "status") {
-      await discord.sendToChannel(`**${evt.text}**`);
-    }
-  });
+function createBridgeMulti({ discord, mcBots }) {
+  // Map channelId -> minecraft client wrapper
+  const byChannel = new Map();
+  for (const { cfg, mc } of mcBots) {
+    byChannel.set(cfg.channelId, { cfg, mc });
+  }
 
-  // Relay Discord -> Minecraft (prefix commands)
+  // Minecraft -> Discord
+  for (const { cfg, mc } of mcBots) {
+    mc.onEvent(async (evt) => {
+      if (evt.type === "chat") {
+        await discord.sendToSpecificChannel(cfg.channelId, `🟩 ${evt.text}`);
+      } else if (evt.type === "status") {
+        await discord.sendToSpecificChannel(cfg.channelId, `**${evt.text}**`);
+      }
+    });
+  }
+
+  // Discord -> correct Minecraft (based on channel)
   discord.client.on("messageCreate", async (msg) => {
     if (msg.author.bot) return;
-    if (msg.channelId !== discord.channelId) return;
+
+    const entry = byChannel.get(msg.channelId);
+    if (!entry) return; // ignore channels not assigned
+
+    const { mc } = entry;
 
     const content = msg.content.trim();
-
-    // Commands:
-    // !mc say hello
-    // !mc cmd /list
     if (!content.toLowerCase().startsWith("!mc ")) return;
 
     const rest = content.slice(4).trim();
@@ -37,7 +44,6 @@ function createBridge({ discord, mc }) {
         await msg.reply("❌ Commands must start with `/` (example: `!mc cmd /list`).");
         return;
       }
-      // WARNING: you should restrict this to admin roles later.
       mc.sendChat(cmd);
       await msg.reply("✅ Command sent to Minecraft.");
       return;
@@ -47,4 +53,4 @@ function createBridge({ discord, mc }) {
   });
 }
 
-module.exports = { createBridge };
+module.exports = { createBridgeMulti };
