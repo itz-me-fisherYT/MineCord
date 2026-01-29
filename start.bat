@@ -7,10 +7,8 @@ echo        Starting MineCord
 echo ================================
 echo.
 
-:: Always run from this script's folder (project root)
 cd /d "%~dp0"
 
-:: Check for Node.js
 node -v >nul 2>&1
 if errorlevel 1 (
     echo ❌ Node.js is not installed or not in PATH.
@@ -19,7 +17,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Check for npm
 npm -v >nul 2>&1
 if errorlevel 1 (
     echo ❌ npm is not available (PATH issue).
@@ -28,7 +25,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Run config check first (if present)
 if exist "check-config.bat" (
     call check-config.bat
     if errorlevel 1 (
@@ -42,10 +38,8 @@ if exist "check-config.bat" (
 )
 
 echo.
-echo ✅ Starting MineCord...
+echo ✅ Starting MineCord in a new window...
 echo.
 
-npm run dev
-echo.
-echo MineCord has stopped.
-pause
+start "MineCord" cmd /k "npm run dev"
+exit /b 0
