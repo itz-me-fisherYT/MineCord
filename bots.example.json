@@ -1,0 +1,22 @@
+{
+  "bots": [
+    {
+      "name": "Fisher-1",
+      "channelId": "1465915869182820558",
+      "host": "donutsmp.net",
+      "port": 25565,
+      "username": "email1@example.com",
+      "auth": "microsoft",
+      "version": "1.20.4"
+    },
+    {
+      "name": "Fisher-2",
+      "channelId": "1465915869182820000",
+      "host": "donutsmp.net",
+      "port": 25565,
+      "username": "email2@example.com",
+      "auth": "microsoft",
+      "version": "1.20.4"
+    }
+  ]
+}
