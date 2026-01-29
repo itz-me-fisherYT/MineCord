@@ -1,4 +1,5 @@
 @echo off
+setlocal
 title MineCord - Running
 
 echo ================================
@@ -12,8 +13,17 @@ cd /d "%~dp0"
 :: Check for Node.js
 node -v >nul 2>&1
 if errorlevel 1 (
-    echo ❌ Node.js is not installed.
+    echo ❌ Node.js is not installed or not in PATH.
     echo Install Node.js 18+ from: https://nodejs.org/
+    pause
+    exit /b 1
+)
+
+:: Check for npm
+npm -v >nul 2>&1
+if errorlevel 1 (
+    echo ❌ npm is not available (PATH issue).
+    echo Reinstall Node.js from https://nodejs.org/ and make sure "Add to PATH" is enabled.
     pause
     exit /b 1
 )
@@ -35,9 +45,7 @@ echo.
 echo ✅ Starting MineCord...
 echo.
 
-:: Start the bot
 npm run dev
-
 echo.
 echo MineCord has stopped.
 pause
