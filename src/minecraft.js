@@ -7,13 +7,19 @@ function startMinecraft({ host, port, username, auth }) {
   const listeners = new Set();
 
   function connect() {
-    console.log(`[MC] Connecting to ${host}:${port} as ${username} (${auth})...`);
+    const forcedVersion = (process.env.MC_VERSION || "").trim();
+
+    console.log(
+      `[MC] Connecting to ${host}:${port} as ${username} (${auth})...` +
+        (forcedVersion ? ` [version=${forcedVersion}]` : "")
+    );
 
     bot = mineflayer.createBot({
       host,
       port,
       username,
-      auth
+      auth,
+      ...(forcedVersion ? { version: forcedVersion } : {})
     });
 
     bot.once("spawn", () => {
@@ -21,14 +27,31 @@ function startMinecraft({ host, port, username, auth }) {
       emit({ type: "status", text: "✅ Connected to Minecraft." });
     });
 
-    // Catch most server text (including plugin/system lines)
-    bot.on("messagestr", (message) => {
-      emit({ type: "chat", text: message });
+    // Optional but helpful: satisfy servers that require a resource-pack status response.
+    bot.on("resourcePack", (url, hash) => {
+      console.log("[MC] Resource pack requested:", url);
+      try {
+        if (bot?._client?.write && hash) {
+          bot._client.write("resource_pack_status", { result: 3, hash }); // accepted
+          setTimeout(() => {
+            try {
+              if (!bot || bot._ended) return;
+              bot._client.write("resource_pack_status", { result: 0, hash }); // successfully loaded
+              emit({ type: "status", text: "📦 Resource pack handshake completed." });
+            } catch {}
+          }, 500);
+        } else if (typeof bot.acceptResourcePack === "function") {
+          bot.acceptResourcePack();
+          emit({ type: "status", text: "📦 Accepted server resource pack." });
+        }
+      } catch (e) {
+        console.error("[MC] Resource pack handling failed:", e);
+      }
     });
 
-    // Optional: player chat event (not always enough on plugin-heavy servers)
-    bot.on("chat", (username, message) => {
-      emit({ type: "chat", text: `<${username}> ${message}` });
+    // Keep prefixes + system messages (no duplicates because we do NOT use bot.on('chat'))
+    bot.on("messagestr", (message) => {
+      emit({ type: "chat", text: message });
     });
 
     bot.on("kicked", (reason) => {
@@ -50,7 +73,7 @@ function startMinecraft({ host, port, username, auth }) {
   let retryMs = 2000;
   function reconnectWithBackoff() {
     const wait = retryMs;
-    retryMs = Math.min(retryMs * 1.5, 30000);
+    retryMs = Math.min(Math.floor(retryMs * 1.5), 30000);
     console.log(`[MC] Reconnecting in ${Math.round(wait / 1000)}s...`);
     setTimeout(() => {
       if (!stopping) connect();
@@ -87,11 +110,7 @@ function startMinecraft({ host, port, username, auth }) {
 
   connect();
 
-  return {
-    onEvent,
-    sendChat,
-    stop
-  };
+  return { onEvent, sendChat, stop };
 }
 
 function stringify(x) {
