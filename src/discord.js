@@ -10,7 +10,7 @@ async function startDiscord({ token, channelId }) {
     partials: [Partials.Channel]
   });
 
-  client.once("ready", async () => {
+  const onReady = async () => {
     console.log(`[Discord] Logged in as ${client.user.tag}`);
     try {
       const ch = await client.channels.fetch(channelId);
@@ -20,7 +20,11 @@ async function startDiscord({ token, channelId }) {
     } catch (e) {
       console.error("[Discord] Failed to fetch/start channel:", e);
     }
-  });
+  };
+
+  // Support both discord.js v14 and v15 event names
+  client.once("ready", onReady);
+  client.once("clientReady", onReady);
 
   await client.login(token);
 
@@ -30,8 +34,8 @@ async function startDiscord({ token, channelId }) {
     async sendToChannel(text) {
       const ch = await client.channels.fetch(channelId);
       if (!ch) return;
-      // Discord message limit safety
-      const chunks = splitIntoChunks(text, 1800);
+
+      const chunks = splitIntoChunks(String(text), 1800);
       for (const c of chunks) await ch.send(c);
     }
   };
