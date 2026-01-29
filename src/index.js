@@ -24,6 +24,10 @@ function loadBotsIfPresent() {
   return json.bots;
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 async function main() {
   const token = mustGetEnv("DISCORD_TOKEN");
 
@@ -31,9 +35,23 @@ async function main() {
 
   const bots = loadBotsIfPresent();
 
+  // ===============================
   // ✅ MULTI MODE (bots.json exists)
+  // ===============================
   if (bots) {
-    const mcBots = bots.map((cfg) => {
+    const mcBots = [];
+
+    // You can tune these in .env if you want
+    const baseDelayMs = Number(process.env.BOT_START_DELAY_MS || 15000); // 15 sec default
+    const jitterMs = Number(process.env.BOT_START_JITTER_MS || 3000);    // + up to 3 sec random
+
+    console.log(`[MineCord] Starting ${bots.length} bot(s) with staggered login...`);
+
+    for (let i = 0; i < bots.length; i++) {
+      const cfg = bots[i];
+
+      console.log(`[MineCord] Starting bot ${i + 1}/${bots.length}: ${cfg.name || cfg.username}`);
+
       const mc = startMinecraft({
         name: cfg.name,
         host: cfg.host,
@@ -43,16 +61,27 @@ async function main() {
         version: cfg.version
       });
 
-      return { cfg, mc };
-    });
+      mcBots.push({ cfg, mc });
+
+      // Wait before starting next bot (prevents auth rate limit)
+      if (i < bots.length - 1) {
+        const wait = baseDelayMs + Math.floor(Math.random() * jitterMs);
+        console.log(`[MineCord] Waiting ${Math.round(wait / 1000)}s before next bot...`);
+        await sleep(wait);
+      }
+    }
 
     createMultiBridge({ discord, mcBots });
+
     console.log(`[MineCord] Started ${mcBots.length} bot(s) (multi mode).`);
     return;
   }
 
+  // ===============================
   // ✅ SINGLE MODE (fallback to .env)
+  // ===============================
   const channelId = mustGetEnv("DISCORD_CHANNEL_ID");
+
   const mc = startMinecraft({
     host: mustGetEnv("MC_HOST"),
     port: Number(process.env.MC_PORT || 25565),
