@@ -3,29 +3,51 @@
   "version": "1.0.0",
   "main": "src/index.js",
   "type": "commonjs",
+
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js"
   },
+
+  "nodemonConfig": {
+    "watch": ["src"],
+    "ext": "js,mjs,cjs",
+    "ignore": [
+      "bots.json",
+      "bots.example.json",
+      "minecord-panel/**",
+      "node_modules/**"
+    ]
+  },
+
   "dependencies": {
+    "cors": "^2.8.6",
     "discord.js": "^14.25.1",
     "dotenv": "^16.6.1",
+    "express": "^5.2.1",
+    "fs-extra": "^11.3.3",
     "mineflayer": "^4.34.0",
     "p-queue": "^9.1.0"
   },
-  "description": "**MineCord** is an open-source Discord ↔ Minecraft bridge bot built with **Node.js**, **discord.js**, and **Mineflayer**.",
+
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  },
+
+  "description": "**MineCord** is an open-source Discord ↔ Minecraft bridge bot built with Node.js, discord.js, and Mineflayer.",
+
   "repository": {
     "type": "git",
     "url": "git+https://github.com/itz-me-fisherYT/MineCord.git"
   },
+
   "keywords": [],
   "author": "",
   "license": "ISC",
+
   "bugs": {
     "url": "https://github.com/itz-me-fisherYT/MineCord/issues"
   },
-  "homepage": "https://github.com/itz-me-fisherYT/MineCord#readme",
-  "devDependencies": {
-    "nodemon": "^3.1.11"
-  }
+
+  "homepage": "https://github.com/itz-me-fisherYT/MineCord#readme"
 }
