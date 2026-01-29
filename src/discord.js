@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits, Partials } = require("discord.js");
 
-async function startDiscord({ token, channelId }) {
+async function startDiscord({ token }) {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -10,45 +10,35 @@ async function startDiscord({ token, channelId }) {
     partials: [Partials.Channel]
   });
 
-  const onReady = async () => {
+  const readyHandler = () => {
     console.log(`[Discord] Logged in as ${client.user.tag}`);
-    try {
-      const ch = await client.channels.fetch(channelId);
-      if (!ch) throw new Error("Channel not found.");
-      console.log(`[Discord] Bound to channel: ${ch.id}`);
-      await ch.send("✅ MineCord is online.");
-    } catch (e) {
-      console.error("[Discord] Failed to fetch/start channel:", e);
-    }
   };
 
-  // Support both discord.js v14 and v15 event names
-  client.once("ready", onReady);
-  client.once("clientReady", onReady);
+  // v14 uses "ready", v15 uses "clientReady"
+  client.once("ready", readyHandler);
+  client.once("clientReady", readyHandler);
 
   await client.login(token);
 
-  return {
-    client,
-    channelId,
-    async sendToChannel(text) {
-      const ch = await client.channels.fetch(channelId);
-      if (!ch) return;
+  async function sendToChannel(channelId, text) {
+    const ch = await client.channels.fetch(channelId).catch(() => null);
+    if (!ch) return;
 
-      const chunks = splitIntoChunks(String(text), 1800);
-      for (const c of chunks) await ch.send(c);
-    }
-  };
+    const chunks = splitIntoChunks(String(text), 1800);
+    for (const c of chunks) await ch.send(c);
+  }
+
+  return { client, sendToChannel };
 }
 
 function splitIntoChunks(text, maxLen) {
   const out = [];
-  let remaining = text;
-  while (remaining.length > maxLen) {
-    out.push(remaining.slice(0, maxLen));
-    remaining = remaining.slice(maxLen);
+  let s = text;
+  while (s.length > maxLen) {
+    out.push(s.slice(0, maxLen));
+    s = s.slice(maxLen);
   }
-  if (remaining.length) out.push(remaining);
+  if (s.length) out.push(s);
   return out;
 }
 
