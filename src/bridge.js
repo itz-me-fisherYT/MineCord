@@ -1,31 +1,27 @@
-function createBridgeMulti({ discord, mcBots }) {
-  // Map channelId -> minecraft client wrapper
+function createMultiBridge({ discord, mcBots }) {
+  // channelId -> { cfg, mc }
   const byChannel = new Map();
-  for (const { cfg, mc } of mcBots) {
-    byChannel.set(cfg.channelId, { cfg, mc });
-  }
+  for (const entry of mcBots) byChannel.set(entry.cfg.channelId, entry);
 
-  // Minecraft -> Discord
+  // MC -> Discord
   for (const { cfg, mc } of mcBots) {
     mc.onEvent(async (evt) => {
       if (evt.type === "chat") {
-        await discord.sendToSpecificChannel(cfg.channelId, `🟩 ${evt.text}`);
+        await discord.sendToChannel(cfg.channelId, `🟩 ${evt.text}`);
       } else if (evt.type === "status") {
-        await discord.sendToSpecificChannel(cfg.channelId, `**${evt.text}**`);
+        await discord.sendToChannel(cfg.channelId, `**${evt.text}**`);
       }
     });
   }
 
-  // Discord -> correct Minecraft (based on channel)
+  // Discord -> MC (only if message is in a mapped channel)
   discord.client.on("messageCreate", async (msg) => {
     if (msg.author.bot) return;
 
     const entry = byChannel.get(msg.channelId);
-    if (!entry) return; // ignore channels not assigned
+    if (!entry) return; // ignore other channels
 
-    const { mc } = entry;
-
-    const content = msg.content.trim();
+    const content = (msg.content || "").trim();
     if (!content.toLowerCase().startsWith("!mc ")) return;
 
     const rest = content.slice(4).trim();
@@ -33,7 +29,7 @@ function createBridgeMulti({ discord, mcBots }) {
     if (rest.toLowerCase().startsWith("say ")) {
       const text = rest.slice(4).trim();
       if (!text) return;
-      mc.sendChat(text);
+      entry.mc.sendChat(text);
       await msg.reply("✅ Sent to Minecraft chat.");
       return;
     }
@@ -44,7 +40,7 @@ function createBridgeMulti({ discord, mcBots }) {
         await msg.reply("❌ Commands must start with `/` (example: `!mc cmd /list`).");
         return;
       }
-      mc.sendChat(cmd);
+      entry.mc.sendChat(cmd);
       await msg.reply("✅ Command sent to Minecraft.");
       return;
     }
@@ -53,4 +49,4 @@ function createBridgeMulti({ discord, mcBots }) {
   });
 }
 
-module.exports = { createBridgeMulti };
+module.exports = { createMultiBridge };
