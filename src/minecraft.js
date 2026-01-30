@@ -71,18 +71,19 @@ function startMinecraft({ host, port, username, auth, version, name, autoConnect
     }, delayMs);
   }
 
-  function safeChatSend(text) {
-    try {
-      bot.chat(text);
-      emit({ type: "status", text: `SENT: ${text}` });
-      return { ok: true };
-    } catch (e) {
-      const err = e?.message || String(e);
-      state.lastError = err;
-      emit({ type: "status", text: `❌ Send failed: ${err}` });
-      return { ok: false, error: err };
-    }
+function safeChatSend(text) {
+  try {
+    bot.chat(text);
+    // ❌ no SENT echo
+    return { ok: true };
+  } catch (e) {
+    const err = e?.message || String(e);
+    state.lastError = err;
+    emit({ type: "status", text: `❌ Send failed: ${err}` });
+    return { ok: false, error: err };
   }
+}
+
 
   function flushQueue() {
     if (!isConnected()) return;
@@ -193,15 +194,14 @@ function startMinecraft({ host, port, username, auth, version, name, autoConnect
     }, wait);
   }
 
-  function sendChat(text) {
-    const msg = String(text || "").trim();
-    if (!msg) return { ok: false, queued: false, error: "Empty message" };
+function sendChat(text) {
+  const msg = String(text || "").trim();
+  if (!msg) return { ok: false, queued: false, error: "Empty message" };
 
-    emit({ type: "status", text: `YOU: ${msg}` });
+  if (isConnected()) {
+    return { ...safeChatSend(msg), queued: false };
+  }
 
-    if (isConnected()) {
-      return { ...safeChatSend(msg), queued: false };
-    }
 
     outQueue.push({ text: msg, ts: Date.now() });
     if (outQueue.length > 50) outQueue.shift();
