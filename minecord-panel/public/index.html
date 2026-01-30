@@ -1,3 +1,4 @@
+<!-- minecord-panel/public/index.html -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -30,10 +31,22 @@
 <section class="card">
   <h2>Console</h2>
 
-  <div id="consoleTabs" class="consoleTabs"></div>
+  <div class="consoleHeader">
+    <div id="consoleTabs" class="consoleTabs"></div>
 
-  <div class="actions">
-    <button onclick="clearLogs()">Clear</button>
+    <div class="consoleToggles">
+      <label class="toggle">
+        <input type="checkbox" id="chatOnlyToggle">
+        <span>Chat only</span>
+      </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="sendAllToggle">
+        <span>Send to all bots</span>
+      </label>
+
+      <button onclick="clearLogs()">Clear</button>
+    </div>
   </div>
 
   <pre id="logs" class="logbox"></pre>
