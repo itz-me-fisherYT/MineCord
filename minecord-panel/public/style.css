@@ -54,3 +54,30 @@ button {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
 }
+
+.cmdRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cmdRow select,
+.cmdRow input {
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #111;
+  color: #ddd;
+}
+
+.cmdRow input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.cmdRow button {
+  padding: 8px 14px;
+  border-radius: 8px;
+}
