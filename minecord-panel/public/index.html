@@ -4,6 +4,7 @@
   <title>MineCord Panel</title>
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
 <h1>MineCord Web Panel</h1>
@@ -21,20 +22,24 @@
   <div class="card">
     <h2>Status</h2>
     <button onclick="loadStatus()">Refresh</button>
-    <button onclick="restartAll()">Restart All</button>
     <div id="status"></div>
   </div>
 
 </div>
 
-<script src="app.js"></script>
-</body>
-</html>
-
 <section class="card">
-  <h2>Logs</h2>
+  <h2>Console</h2>
+
+  <div id="consoleTabs" class="consoleTabs"></div>
+
   <div class="actions">
     <button onclick="clearLogs()">Clear</button>
   </div>
+
   <pre id="logs" class="logbox"></pre>
 </section>
+
+<script src="app.js"></script>
+
+</body>
+</html>
