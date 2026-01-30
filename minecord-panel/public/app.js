@@ -188,12 +188,19 @@ function getRenderedLinesForBot(bot) {
   const entries = buffers[bot] || [];
   const chatOnly = !!(chatOnlyToggle && chatOnlyToggle.checked);
 
-  const filtered = chatOnly
-    ? entries.filter((e) => e.level === "chat")
-    : entries;
+  const filtered = entries.filter((e) => {
+    // hide local echo lines
+    const text = String(e.text || "").toUpperCase();
+    if (text.startsWith("YOU:")) return false;
+    if (text.startsWith("SENT:")) return false;
+
+    if (chatOnly) return e.level === "chat";
+    return true;
+  });
 
   return filtered.map(formatLogLine);
 }
+
 
 function renderLogs() {
   if (!logsBox) return;
