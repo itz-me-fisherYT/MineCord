@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials } = require("discord.js");
+const { Client, GatewayIntentBits, Partials, Events } = require("discord.js");
 
 async function startDiscord({ token }) {
   const client = new Client({
@@ -7,16 +7,13 @@ async function startDiscord({ token }) {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent
     ],
-    partials: [Partials.Channel]
+    partials: [Partials.Channel, Partials.Message]
   });
 
-  const readyHandler = () => {
+  // Works in v14 and future versions without double-firing
+  client.once(Events.ClientReady ?? "ready", () => {
     console.log(`[Discord] Logged in as ${client.user.tag}`);
-  };
-
-  // v14 uses "ready", v15 uses "clientReady"
-  client.once("ready", readyHandler);
-  client.once("clientReady", readyHandler);
+  });
 
   await client.login(token);
 
