@@ -10,21 +10,14 @@ const { startDiscord } = require("./discord");
 const { startMinecraft } = require("./minecraft");
 const { createMultiBridge } = require("./bridge");
 
+/* =========================
+   Helpers
+========================= */
+
 function mustGetEnv(key) {
   const v = process.env[key];
   if (!v) throw new Error(`Missing required env var: ${key}`);
   return v;
-}
-
-function loadBotsIfPresent() {
-  const p = path.join(process.cwd(), "bots.json");
-  if (!fs.existsSync(p)) return null;
-
-  const raw = fs.readFileSync(p, "utf8");
-  const json = JSON.parse(raw);
-
-  if (!json?.bots?.length) throw new Error("bots.json must contain { bots: [...] }");
-  return json.bots;
 }
 
 function sleep(ms) {
@@ -35,26 +28,54 @@ function nowMs() {
   return Date.now();
 }
 
+function loadBotsIfPresent() {
+  const p = path.join(process.cwd(), "bots.json");
+  if (!fs.existsSync(p)) return null;
+
+  const raw = fs.readFileSync(p, "utf8");
+  const json = JSON.parse(raw);
+
+  if (!json?.bots?.length) {
+    throw new Error("bots.json must contain { bots: [...] }");
+  }
+
+  return json.bots;
+}
+
+/* =========================
+   Main
+========================= */
+
 async function main() {
   const token = mustGetEnv("DISCORD_TOKEN");
   const discord = await startDiscord({ token });
 
   const bots = loadBotsIfPresent();
 
-  // ---- Web panel (same process) ----
+  /* =========================
+     Express panel
+  ========================= */
+
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
 
-  // ==========================
-  // Live log bus (SSE)
-  // ==========================
+  /* =========================
+     Per-bot console buffers + SSE
+  ========================= */
+
   const LOG_MAX = Number(process.env.PANEL_LOG_MAX || 300);
-  const logBuffer = [];
+  const consoleBuffers = new Map(); // botName -> [ {ts, level, text, bot} ]
   const logClients = new Set();
 
-  function pushLog(level, parts) {
-    const text = parts
+  function ensureBuf(bot) {
+    const key = bot || "system";
+    if (!consoleBuffers.has(key)) consoleBuffers.set(key, []);
+    return consoleBuffers.get(key);
+  }
+
+  function toText(parts) {
+    return parts
       .map((p) => {
         if (p instanceof Error) return p.stack || p.message;
         if (typeof p === "string") return p;
@@ -65,15 +86,19 @@ async function main() {
         }
       })
       .join(" ");
+  }
 
+  function pushLog(bot, level, parts) {
     const entry = {
       ts: Date.now(),
-      level,
-      text
+      level: level || "log",
+      text: toText(parts),
+      bot: bot || "system"
     };
 
-    logBuffer.push(entry);
-    while (logBuffer.length > LOG_MAX) logBuffer.shift();
+    const buf = ensureBuf(entry.bot);
+    buf.push(entry);
+    while (buf.length > LOG_MAX) buf.shift();
 
     const payload = `event: log\ndata: ${JSON.stringify(entry)}\n\n`;
     for (const res of logClients) {
@@ -83,60 +108,68 @@ async function main() {
     }
   }
 
-  // Patch console so your CMD logs also appear in the panel
+  // Patch console => goes to "system"
   const _log = console.log.bind(console);
   const _warn = console.warn.bind(console);
   const _error = console.error.bind(console);
 
   console.log = (...args) => {
     _log(...args);
-    pushLog("log", args);
+    pushLog("system", "log", args);
   };
   console.warn = (...args) => {
     _warn(...args);
-    pushLog("warn", args);
+    pushLog("system", "warn", args);
   };
   console.error = (...args) => {
     _error(...args);
-    pushLog("error", args);
+    pushLog("system", "error", args);
   };
 
-  // Recent logs (buffer)
-  app.get("/api/logs", (req, res) => {
-    res.json({ logs: logBuffer });
-  });
-
-  // Live log stream (SSE)
+  // SSE stream (init sends ALL buffers)
   app.get("/api/logs/stream", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders?.();
 
-    // Send buffer on connect
-    res.write(`event: init\ndata: ${JSON.stringify({ logs: logBuffer })}\n\n`);
+    const buffers = {};
+    for (const [bot, logs] of consoleBuffers.entries()) {
+      buffers[bot] = logs;
+    }
 
+    res.write(`event: init\ndata: ${JSON.stringify({ buffers })}\n\n`);
     logClients.add(res);
 
+    const ping = setInterval(() => {
+      try {
+        res.write(`: ping\n\n`);
+      } catch {}
+    }, 15000);
+
     req.on("close", () => {
+      clearInterval(ping);
       logClients.delete(res);
     });
   });
 
-  // ==========================
-  // Serve panel UI
-  // ==========================
+  /* =========================
+     Serve panel UI
+  ========================= */
+
   const panelPublic = path.join(process.cwd(), "minecord-panel", "public");
   app.use("/", express.static(panelPublic));
 
   app.get("/api/health", (req, res) => res.json({ ok: true }));
 
-  // Read/write ROOT bots.json
+  /* =========================
+     bots.json read/write
+  ========================= */
+
   app.get("/api/bots", (req, res) => {
     try {
       const p = path.join(process.cwd(), "bots.json");
-      const raw = fs.readFileSync(p, "utf8");
-      res.json(JSON.parse(raw));
+      res.json(JSON.parse(fs.readFileSync(p, "utf8")));
     } catch {
       res.json({});
     }
@@ -158,7 +191,10 @@ async function main() {
     console.log(`[MineCord] Serving UI from: ${panelPublic}`);
   });
 
-  // ---- SINGLE MODE ----
+  /* =========================
+     SINGLE MODE
+  ========================= */
+
   if (!bots) {
     const channelId = mustGetEnv("DISCORD_CHANNEL_ID");
 
@@ -170,6 +206,12 @@ async function main() {
       version: process.env.MC_VERSION,
       name: "default",
       autoConnect: true
+    });
+
+    mc.onEvent((evt) => {
+      if (evt.type === "chat") pushLog("default", "chat", [evt.text]);
+      if (evt.type === "status") pushLog("default", "status", [evt.text]);
+      if (evt.type === "state") pushLog("default", "log", [`phase: ${evt.phase}`]);
     });
 
     createMultiBridge({
@@ -188,11 +230,13 @@ async function main() {
 
     app.post("/api/start/:name", (req, res) => {
       mc.start();
+      pushLog("default", "log", ["Manual start"]);
       res.json({ ok: true });
     });
 
     app.post("/api/stop/:name", (req, res) => {
       mc.stop();
+      pushLog("default", "log", ["Manual stop"]);
       res.json({ ok: true });
     });
 
@@ -200,11 +244,14 @@ async function main() {
     return;
   }
 
-  // ---- MULTI MODE ----
+  /* =========================
+     MULTI MODE
+  ========================= */
+
   const cfgByName = new Map();
   for (const cfg of bots) {
     const name = String(cfg?.name || "").trim();
-    if (!name) throw new Error("Every bot in bots.json must have a non-empty 'name'");
+    if (!name) throw new Error("Every bot must have a non-empty name");
     cfgByName.set(name, cfg);
   }
 
@@ -225,8 +272,7 @@ async function main() {
   }
 
   function ensureInstance(name) {
-    const existing = mcByName.get(name);
-    if (existing) return existing;
+    if (mcByName.has(name)) return mcByName.get(name);
 
     const cfg = cfgByName.get(name);
     if (!cfg) return null;
@@ -241,8 +287,19 @@ async function main() {
       autoConnect: false
     });
 
+    // Hook MC events into per-bot console
+    mc.onEvent((evt) => {
+      if (evt.type === "chat") pushLog(name, "chat", [evt.text]);
+      if (evt.type === "status") pushLog(name, "status", [evt.text]);
+      if (evt.type === "state") pushLog(name, "log", [`phase: ${evt.phase}`]);
+    });
+
     const entry = { cfg, mc };
     mcByName.set(name, entry);
+
+    // create buffer early so tabs exist immediately
+    ensureBuf(name);
+
     return entry;
   }
 
@@ -251,17 +308,18 @@ async function main() {
     if (!entry) return { ok: false, error: `Unknown bot: ${name}` };
 
     if (!canManualAction(name)) {
-      return { ok: false, error: `Cooldown: wait a bit before starting ${name} again.` };
+      return { ok: false, error: `Cooldown active for ${name}` };
     }
     markManualAction(name);
 
     if (stagger) {
       const wait = baseDelayMs + Math.floor(Math.random() * jitterMs);
-      console.log(`[MineCord] Waiting ${Math.round(wait / 1000)}s before starting ${name}...`);
+      pushLog(name, "log", [`Waiting ${Math.round(wait / 1000)}s before start...`]);
       await sleep(wait);
     }
 
     entry.mc.start();
+    pushLog(name, "log", ["Start requested"]);
     return { ok: true };
   }
 
@@ -271,6 +329,7 @@ async function main() {
 
     markManualAction(name);
     entry.mc.stop();
+    pushLog(name, "log", ["Stop requested"]);
     return { ok: true };
   }
 
@@ -287,23 +346,23 @@ async function main() {
     return out;
   }
 
-  console.log(`[MineCord] Loaded ${cfgByName.size} bot(s) from bots.json.`);
+  console.log(`[MineCord] Loaded ${cfgByName.size} bot(s) from bots.json`);
   const names = Array.from(cfgByName.keys());
 
+  // Create instances on boot; optionally auto-start if enabled !== false
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
     const cfg = cfgByName.get(name);
 
-    // Always create instances, but DO NOT connect until enabled or panel says Join
     ensureInstance(name);
 
     const enabled = cfg.enabled !== false; // default true
     if (!enabled) {
-      console.log(`[MineCord] Bot disabled on boot: ${name}`);
+      pushLog(name, "warn", ["Disabled on boot"]);
       continue;
     }
 
-    console.log(`[MineCord] Boot starting: ${name}`);
+    pushLog(name, "log", ["Boot starting"]);
     await startBot(name, { stagger: i !== 0 });
   }
 
@@ -312,7 +371,7 @@ async function main() {
     mcBots: Array.from(mcByName.values())
   });
 
-  console.log(`[MineCord] Multi mode ready. Use the panel to Join/Leave bots individually.`);
+  console.log(`[MineCord] Multi mode ready. Use panel to Join / Leave bots.`);
 
   app.get("/api/status", (req, res) => res.json(statusAll()));
 
