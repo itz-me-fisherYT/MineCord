@@ -4,6 +4,12 @@ const statusBox = document.getElementById("status");
 const logsBox = document.getElementById("logs");
 const tabsBox = document.getElementById("consoleTabs");
 
+// NEW cmd UI
+const cmdBotSelect = document.getElementById("cmdBotSelect");
+const cmdInput = document.getElementById("cmdInput");
+const cmdSendBtn = document.getElementById("cmdSendBtn");
+const cmdMsg = document.getElementById("cmdMsg");
+
 let buffers = {};         // bot -> [formatted lines]
 let activeBot = "system";
 let logSource = null;
@@ -160,8 +166,9 @@ async function loadStatus() {
       statusBox.appendChild(div);
     }
 
-    // Ensure tabs exist for bots we can see
+    // ensure tabs + dropdown have bots
     ensureTabsFor(names);
+    ensureCmdBots(names);
   } catch {}
 }
 
@@ -172,11 +179,11 @@ async function loadStatus() {
 function formatLog(e) {
   const t = new Date(e.ts).toLocaleTimeString();
   const lvl = (e.level || "log").toUpperCase();
+  const bot = e.bot || "system";
 
-  // Show chat cleaner
-  if (e.level === "chat") return `[${t}] ${e.text}`;
-  if (e.level === "status") return `[${t}] * ${e.text}`;
-  return `[${t}] ${lvl}: ${e.text}`;
+  if (e.level === "chat") return `[${t}] (${bot}) ${e.text}`;
+  if (e.level === "status") return `[${t}] (${bot}) * ${e.text}`;
+  return `[${t}] (${bot}) ${lvl}: ${e.text}`;
 }
 
 function renderLogs() {
@@ -184,6 +191,11 @@ function renderLogs() {
   const lines = buffers[activeBot] || [];
   logsBox.textContent = lines.join("\n");
   logsBox.scrollTop = logsBox.scrollHeight;
+
+  // keep dropdown aligned with active bot
+  if (cmdBotSelect && cmdBotSelect.value !== activeBot && buffers[activeBot]) {
+    cmdBotSelect.value = activeBot;
+  }
 }
 
 function buildTabs() {
@@ -209,13 +221,8 @@ function buildTabs() {
 }
 
 function ensureTabsFor(botNames) {
-  // Ensure system tab always exists
   if (!buffers.system) buffers.system = [];
-
-  for (const name of botNames) {
-    if (!buffers[name]) buffers[name] = [];
-  }
-
+  for (const name of botNames) if (!buffers[name]) buffers[name] = [];
   if (!buffers[activeBot]) activeBot = botNames[0] || "system";
   buildTabs();
 }
@@ -225,9 +232,8 @@ function addLogEntry(e) {
   if (!buffers[bot]) buffers[bot] = [];
 
   buffers[bot].push(formatLog(e));
-  if (buffers[bot].length > 500) buffers[bot].shift();
+  if (buffers[bot].length > 800) buffers[bot].shift();
 
-  // keep tabs updated if a new bot appears
   buildTabs();
 
   if (bot === activeBot) renderLogs();
@@ -266,12 +272,12 @@ function startLogStream() {
       if (!buffers.system) buffers.system = [];
 
       if (!buffers[activeBot]) {
-        // Prefer first non-system bot if present
         const keys = Object.keys(buffers).filter(k => k !== "system");
         activeBot = keys[0] || "system";
       }
 
       buildTabs();
+      ensureCmdBots(Object.keys(buffers).filter(k => k !== "system"));
       renderLogs();
     } catch {}
   });
@@ -282,9 +288,7 @@ function startLogStream() {
     } catch {}
   });
 
-  logSource.onerror = () => {
-    // browser auto-reconnects
-  };
+  logSource.onerror = () => {};
 }
 
 /* =========================
@@ -299,12 +303,9 @@ async function joinBot(name) {
       alert(out.error || "Join failed");
       return;
     }
-
-    // Auto switch console to that bot (minecraftafk feel)
     activeBot = name;
     buildTabs();
     renderLogs();
-
     await loadStatus();
   } catch {
     alert("Join failed");
@@ -323,6 +324,88 @@ async function leaveBot(name) {
   } catch {
     alert("Leave failed");
   }
+}
+
+/* =========================
+   Panel CMD box
+========================= */
+
+function ensureCmdBots(names) {
+  if (!cmdBotSelect) return;
+
+  const unique = Array.from(new Set(names)).filter(Boolean).sort((a, b) => a.localeCompare(b));
+
+  const current = cmdBotSelect.value;
+
+  cmdBotSelect.innerHTML = "";
+
+  // Always include active bot if it exists
+  for (const n of unique) {
+    const opt = document.createElement("option");
+    opt.value = n;
+    opt.textContent = n;
+    cmdBotSelect.appendChild(opt);
+  }
+
+  // Pick activeBot if it’s a real bot, otherwise first option
+  const canUseActive = unique.includes(activeBot);
+  cmdBotSelect.value = canUseActive ? activeBot : (current && unique.includes(current) ? current : (unique[0] || ""));
+}
+
+async function sendPanelCmd() {
+  if (!cmdInput || !cmdBotSelect) return;
+
+  const botName = String(cmdBotSelect.value || "").trim();
+  const text = String(cmdInput.value || "").trim();
+
+  if (!botName) {
+    if (cmdMsg) cmdMsg.textContent = "Pick a bot first.";
+    return;
+  }
+  if (!text) return;
+
+  if (cmdMsg) cmdMsg.textContent = "";
+
+  cmdSendBtn && (cmdSendBtn.disabled = true);
+
+  try {
+    const res = await fetch(`/api/mc/${encodeURIComponent(botName)}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+
+    const out = await res.json().catch(() => ({}));
+
+    if (!res.ok || out.ok === false) {
+      if (cmdMsg) cmdMsg.textContent = out.error || "Send failed";
+      return;
+    }
+
+    if (cmdMsg) cmdMsg.textContent = out.queued ? "Queued (bot not ready yet)." : "Sent.";
+    cmdInput.value = "";
+    cmdInput.focus();
+
+    // switch console to that bot
+    activeBot = botName;
+    buildTabs();
+    renderLogs();
+  } catch (e) {
+    if (cmdMsg) cmdMsg.textContent = "Send failed";
+  } finally {
+    cmdSendBtn && (cmdSendBtn.disabled = false);
+  }
+}
+
+if (cmdSendBtn) cmdSendBtn.addEventListener("click", () => sendPanelCmd());
+
+if (cmdInput) {
+  cmdInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendPanelCmd();
+    }
+  });
 }
 
 /* =========================
@@ -360,4 +443,3 @@ window.saveBots = saveBots;
 window.loadStatus = loadStatus;
 window.joinBot = joinBot;
 window.leaveBot = leaveBot;
-console.log("Minecord Panel app.js loaded");
