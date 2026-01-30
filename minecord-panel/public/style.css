@@ -1,3 +1,4 @@
+/* minecord-panel/public/style.css */
 body {
   font-family: Arial;
   background: #0f141b;
@@ -32,6 +33,12 @@ button {
   border: none;
   color: white;
   cursor: pointer;
+  border-radius: 8px;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .statusRow {
@@ -40,8 +47,14 @@ button {
   padding: 5px 0;
 }
 
+.small {
+  opacity: 0.85;
+  font-size: 12px;
+}
+
 .on { color: #00ff88; }
 .off { color: #ff4444; }
+
 .logbox {
   height: 280px;
   overflow: auto;
@@ -55,6 +68,55 @@ button {
   font-size: 12px;
 }
 
+/* Tabs + header */
+.consoleHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.consoleTabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tabBtn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #243041;
+  border: 1px solid #2a3442;
+}
+
+.tabBtn.active {
+  background: #33465f;
+  border-color: #4a607c;
+}
+
+.consoleToggles {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  font-size: 13px;
+  opacity: 0.95;
+}
+
+.toggle input {
+  transform: translateY(1px);
+}
+
+/* CMD row */
 .cmdRow {
   display: flex;
   gap: 8px;
