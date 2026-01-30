@@ -240,6 +240,15 @@ async function main() {
       res.json({ ok: true });
     });
 
+    // ✅ NEW: send chat/cmd from panel
+    app.post("/api/mc/:name/send", (req, res) => {
+      const text = String(req.body?.text || "").trim();
+      if (!text) return res.status(400).json({ ok: false, error: "Missing text" });
+
+      const r = mc.sendChat(text);
+      res.json({ ok: !!r.ok, queued: !!r.queued, error: r.error || "" });
+    });
+
     console.log("[MineCord] Started (single mode).");
     return;
   }
@@ -383,6 +392,19 @@ async function main() {
   app.post("/api/stop/:name", (req, res) => {
     const name = String(req.params.name || "").trim();
     res.json(stopBot(name));
+  });
+
+  // ✅ NEW: send chat/cmd from panel
+  app.post("/api/mc/:name/send", (req, res) => {
+    const name = String(req.params.name || "").trim();
+    const entry = mcByName.get(name) || ensureInstance(name);
+    if (!entry) return res.status(404).json({ ok: false, error: `Unknown bot: ${name}` });
+
+    const text = String(req.body?.text || "").trim();
+    if (!text) return res.status(400).json({ ok: false, error: "Missing text" });
+
+    const r = entry.mc.sendChat(text);
+    res.json({ ok: !!r.ok, queued: !!r.queued, error: r.error || "" });
   });
 }
 
