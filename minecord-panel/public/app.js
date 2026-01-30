@@ -2,6 +2,10 @@ const botsBox = document.getElementById("bots");
 const msg = document.getElementById("msg");
 const statusBox = document.getElementById("status");
 
+// Logs box is optional — if you haven't added it to HTML yet, nothing breaks.
+const logsBox = document.getElementById("logs");
+let logLines = [];
+
 function phaseToUi(phase) {
   const p = String(phase || "idle").toLowerCase();
   if (p === "connected") return { text: "CONNECTED", cls: "on" };
@@ -115,6 +119,58 @@ async function loadStatus() {
   }
 }
 
+// ===== Logs =====
+function renderLogs() {
+  if (!logsBox) return;
+  logsBox.textContent = logLines.join("\n");
+  logsBox.scrollTop = logsBox.scrollHeight;
+}
+
+function clearLogs() {
+  logLines = [];
+  renderLogs();
+}
+window.clearLogs = clearLogs;
+
+function formatLog(e) {
+  const t = new Date(e.ts).toLocaleTimeString();
+  const lvl = (e.level || "log").toUpperCase();
+  return `[${t}] ${lvl}: ${e.text}`;
+}
+
+function addLogEntry(e) {
+  logLines.push(formatLog(e));
+  if (logLines.length > 500) logLines.shift();
+  renderLogs();
+}
+
+function startLogStream() {
+  if (!logsBox) return;
+
+  const es = new EventSource("/api/logs/stream");
+
+  es.addEventListener("init", (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      const logs = Array.isArray(data.logs) ? data.logs : [];
+      logLines = logs.map(formatLog);
+      renderLogs();
+    } catch {}
+  });
+
+  es.addEventListener("log", (ev) => {
+    try {
+      const e = JSON.parse(ev.data);
+      addLogEntry(e);
+    } catch {}
+  });
+
+  es.onerror = () => {
+    // Browser auto-retries; keep quiet.
+  };
+}
+
+// ===== Helpers =====
 function escapeHtml(s) {
   return String(s)
     .replaceAll("&", "&amp;")
@@ -148,10 +204,13 @@ async function leaveBot(name) {
   await loadStatus();
 }
 
-// Auto refresh
+// Auto refresh status
 setInterval(() => {
   loadStatus().catch(() => {});
 }, 3000);
 
-// Optional: load once on page open
+// Start log stream (only if #logs exists)
+startLogStream();
+
+// Initial status load
 loadStatus().catch(() => {});
