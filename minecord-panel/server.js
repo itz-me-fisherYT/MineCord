@@ -1,124 +1,133 @@
-const express = require("express");
-const cors = require("cors");
-const fs = require("fs-extra");
-const path = require("path");
+// server.js
+import express from "express";
+import http from "http";
+import path from "path";
+import fs from "fs";
+import { WebSocketServer } from "ws";
+import { spawn } from "child_process";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
-// IMPORTANT: use the ROOT bots.json, not minecord-panel/bots.json
-const BOTS_FILE = path.join(__dirname, "..", "bots.json");
-
-// If a bot hasn't heartbeated in this time, show it as offline
-const ONLINE_TTL_MS = 20_000;
-
-app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// ---------- Helpers ----------
-async function readBotsFile() {
-  try {
-    const data = await fs.readJson(BOTS_FILE);
+const BOTS_PATH = path.join(__dirname, "bots.json"); // user-local config file
+const botProcs = new Map(); // botId -> child process
+const wsClients = new Set();
 
-    // Support BOTH formats:
-    // 1) { bots: [ {...}, {...} ] }
-    // 2) [ {...}, {...} ]
-    const botsArr = Array.isArray(data) ? data : (Array.isArray(data?.bots) ? data.bots : []);
-    const names = botsArr
-      .map((b) => String(b?.name || "").trim())
-      .filter(Boolean);
+function readBotsConfig() {
+  if (!fs.existsSync(BOTS_PATH)) {
+    // fall back to example if first run
+    const example = path.join(__dirname, "bots.example.json");
+    if (fs.existsSync(example)) fs.copyFileSync(example, BOTS_PATH);
+    else fs.writeFileSync(BOTS_PATH, JSON.stringify({ bots: [] }, null, 2));
+  }
+  return JSON.parse(fs.readFileSync(BOTS_PATH, "utf8"));
+}
 
-    return { raw: data, botsArr, names };
-  } catch {
-    return { raw: {}, botsArr: [], names: [] };
+function sendToAll(msgObj) {
+  const data = JSON.stringify(msgObj);
+  for (const ws of wsClients) {
+    if (ws.readyState === 1) ws.send(data);
   }
 }
 
-// ---------- Health ----------
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true });
-});
+function emitLog(botId, level, message) {
+  sendToAll({
+    type: "log",
+    botId,
+    level,
+    message: String(message).slice(0, 10000),
+    ts: Date.now(),
+  });
+}
 
-// ---------- Bots.json (reads/writes ROOT file) ----------
-app.get("/api/bots", async (req, res) => {
-  const { raw } = await readBotsFile();
-  res.json(raw);
-});
+function emitStatus(botId, status) {
+  sendToAll({ type: "status", botId, status, ts: Date.now() });
+}
 
-app.post("/api/bots", async (req, res) => {
-  try {
-    const body = req.body;
-    if (!body || typeof body !== "object") {
-      return res.status(400).json({ ok: false, error: "Body must be JSON" });
+function startBot(botId) {
+  if (botProcs.has(botId)) return;
+
+  const cfg = readBotsConfig();
+  const bot = cfg.bots?.find((b) => b.id === botId);
+  if (!bot) throw new Error(`Bot not found: ${botId}`);
+
+  // Start bot as its own process
+  const child = spawn(process.execPath, ["src/index.js", "--botId", botId], {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      BOT_ID: botId,
+      // You can also pass bot config via env if you want:
+      // SERVER_IP: bot.serverIp, etc...
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  botProcs.set(botId, child);
+  emitStatus(botId, "starting");
+
+  child.stdout.on("data", (d) => emitLog(botId, "info", d.toString()));
+  child.stderr.on("data", (d) => emitLog(botId, "error", d.toString()));
+
+  child.on("close", (code, signal) => {
+    botProcs.delete(botId);
+    emitLog(botId, "warn", `Bot exited (code=${code}, signal=${signal})`);
+    emitStatus(botId, "stopped");
+  });
+
+  emitStatus(botId, "running");
+}
+
+function stopBot(botId) {
+  const child = botProcs.get(botId);
+  if (!child) return;
+
+  emitStatus(botId, "stopping");
+
+  // Gentle shutdown first
+  child.kill("SIGTERM");
+
+  // Force-kill after 5s if needed
+  setTimeout(() => {
+    if (botProcs.get(botId)) child.kill("SIGKILL");
+  }, 5000);
+}
+
+wss.on("connection", (ws) => {
+  wsClients.add(ws);
+
+  // send initial bots list + running statuses
+  const cfg = readBotsConfig();
+  ws.send(JSON.stringify({ type: "bots", bots: cfg.bots ?? [] }));
+  ws.send(JSON.stringify({
+    type: "running",
+    running: Array.from(botProcs.keys()),
+  }));
+
+  ws.on("message", (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    if (msg.type === "start" && msg.botId) {
+      try { startBot(msg.botId); } catch (e) { emitLog(msg.botId, "error", e.message); }
     }
 
-    // Allow either format; just save what the UI sends.
-    await fs.writeJson(BOTS_FILE, body, { spaces: 2 });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    if (msg.type === "stop" && msg.botId) {
+      stopBot(msg.botId);
+    }
+  });
+
+  ws.on("close", () => wsClients.delete(ws));
 });
 
-// ---------- Status (bots.json list + heartbeat) ----------
-let status = {};
-
-// Heartbeat: POST /api/heartbeat/Fisher-2
-app.post("/api/heartbeat/:botName", (req, res) => {
-  const botName = String(req.params.botName || "").trim();
-  if (!botName) return res.status(400).json({ ok: false, error: "Missing bot name" });
-
-  status[botName] = {
-    lastSeen: Date.now(),
-    ...(req.body && typeof req.body === "object" ? req.body : {})
-  };
-
-  res.json({ ok: true });
-});
-
-// Status returns ALL bots from root bots.json, even if never heartbeated
-app.get("/api/status", async (req, res) => {
-  const now = Date.now();
-  const { names } = await readBotsFile();
-
-  const out = {};
-
-  for (const name of names) {
-    const lastSeen = status[name]?.lastSeen || 0;
-    out[name] = {
-      online: lastSeen ? (now - lastSeen <= ONLINE_TTL_MS) : false,
-      lastSeen: lastSeen || null
-    };
-  }
-
-  // Include any extra heartbeating bots not listed in bots.json (optional)
-  for (const name of Object.keys(status)) {
-    if (out[name]) continue;
-    const lastSeen = status[name]?.lastSeen || 0;
-    out[name] = {
-      online: lastSeen ? (now - lastSeen <= ONLINE_TTL_MS) : false,
-      lastSeen: lastSeen || null
-    };
-  }
-
-  res.json(out);
-});
-
-// ---------- Restart (still stub) ----------
-app.post("/api/restart/:botName", (req, res) => {
-  const botName = String(req.params.botName || "").trim();
-  console.log("Restart requested:", botName);
-  res.json({ ok: true });
-});
-
-app.post("/api/restart-all", (req, res) => {
-  console.log("Restart ALL requested");
-  res.json({ ok: true });
-});
-
-// ---------- Start ----------
-app.listen(PORT, () => {
-  console.log(`Web Panel running at http://localhost:${PORT}`);
-  console.log(`Using bots file: ${BOTS_FILE}`);
+server.listen(process.env.PORT || 3000, () => {
+  console.log(`MineCord panel: http://localhost:${process.env.PORT || 3000}`);
 });
