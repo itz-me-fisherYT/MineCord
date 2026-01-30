@@ -1,18 +1,33 @@
+// minecord-panel/public/app.js
 const botsBox = document.getElementById("bots");
 const msg = document.getElementById("msg");
 const statusBox = document.getElementById("status");
 const logsBox = document.getElementById("logs");
 const tabsBox = document.getElementById("consoleTabs");
 
-// NEW cmd UI
+// Toggles
+const chatOnlyToggle = document.getElementById("chatOnlyToggle");
+const sendAllToggle = document.getElementById("sendAllToggle");
+
+// CMD UI
 const cmdBotSelect = document.getElementById("cmdBotSelect");
 const cmdInput = document.getElementById("cmdInput");
 const cmdSendBtn = document.getElementById("cmdSendBtn");
 const cmdMsg = document.getElementById("cmdMsg");
 
-let buffers = {};         // bot -> [formatted lines]
+let buffers = {}; // bot -> [ {ts, level, text, bot} ]
 let activeBot = "system";
 let logSource = null;
+
+// command history (terminal-like)
+let cmdHistory = [];
+let cmdHistIndex = -1; // -1 means not browsing history
+let cmdDraft = "";
+
+// persisted toggle + history (nice QoL)
+const LS_CHAT_ONLY = "minecord_chatOnly";
+const LS_SEND_ALL = "minecord_sendAll";
+const LS_CMD_HISTORY = "minecord_cmdHistory_v1";
 
 /* =========================
    Status helpers
@@ -112,15 +127,9 @@ async function loadStatus() {
       const lastErr = mc.lastError ? String(mc.lastError).slice(0, 140) : "";
       const lastDisc = mc.lastDisconnectAt || null;
 
-      const canJoin =
-        phase === "idle" ||
-        phase === "disconnected" ||
-        phase === "stopped";
+      const canJoin = phase === "idle" || phase === "disconnected" || phase === "stopped";
 
-      const canLeave =
-        phase === "connected" ||
-        phase === "connecting" ||
-        phase === "disconnected";
+      const canLeave = phase === "connected" || phase === "connecting" || phase === "disconnected";
 
       const div = document.createElement("div");
       div.className = "statusRow";
@@ -130,11 +139,7 @@ async function loadStatus() {
           <b>${escapeHtml(name)}</b>
 
           <div class="small">
-            ${
-              entry.host
-                ? `${escapeHtml(entry.host)}:${escapeHtml(entry.port || 25565)}`
-                : ""
-            }
+            ${entry.host ? `${escapeHtml(entry.host)}:${escapeHtml(entry.port || 25565)}` : ""}
             ${mc.upForMs ? ` • up ${fmtUptime(mc.upForMs)}` : ""}
             ${lastDisc ? ` • last dc ${fmtAgo(lastDisc)}` : ""}
           </div>
@@ -151,15 +156,8 @@ async function loadStatus() {
         <div style="display:flex; align-items:center; gap:10px;">
           <span class="${ui.cls}">${ui.text}</span>
 
-          <button ${canJoin ? "" : "disabled"}
-            onclick="joinBot('${escapeAttr(name)}')">
-            Join
-          </button>
-
-          <button ${canLeave ? "" : "disabled"}
-            onclick="leaveBot('${escapeAttr(name)}')">
-            Leave
-          </button>
+          <button ${canJoin ? "" : "disabled"} onclick="joinBot('${escapeAttr(name)}')">Join</button>
+          <button ${canLeave ? "" : "disabled"} onclick="leaveBot('${escapeAttr(name)}')">Leave</button>
         </div>
       `;
 
@@ -176,7 +174,7 @@ async function loadStatus() {
    Console tabs + logs
 ========================= */
 
-function formatLog(e) {
+function formatLogLine(e) {
   const t = new Date(e.ts).toLocaleTimeString();
   const lvl = (e.level || "log").toUpperCase();
   const bot = e.bot || "system";
@@ -186,15 +184,27 @@ function formatLog(e) {
   return `[${t}] (${bot}) ${lvl}: ${e.text}`;
 }
 
+function getRenderedLinesForBot(bot) {
+  const entries = buffers[bot] || [];
+  const chatOnly = !!(chatOnlyToggle && chatOnlyToggle.checked);
+
+  const filtered = chatOnly
+    ? entries.filter((e) => e.level === "chat")
+    : entries;
+
+  return filtered.map(formatLogLine);
+}
+
 function renderLogs() {
   if (!logsBox) return;
-  const lines = buffers[activeBot] || [];
+
+  const lines = getRenderedLinesForBot(activeBot);
   logsBox.textContent = lines.join("\n");
   logsBox.scrollTop = logsBox.scrollHeight;
 
   // keep dropdown aligned with active bot
   if (cmdBotSelect && cmdBotSelect.value !== activeBot && buffers[activeBot]) {
-    cmdBotSelect.value = activeBot;
+    if (!sendAllToggle?.checked) cmdBotSelect.value = activeBot;
   }
 }
 
@@ -231,11 +241,16 @@ function addLogEntry(e) {
   const bot = e.bot || "system";
   if (!buffers[bot]) buffers[bot] = [];
 
-  buffers[bot].push(formatLog(e));
+  buffers[bot].push({
+    ts: e.ts,
+    level: e.level || "log",
+    text: String(e.text ?? ""),
+    bot
+  });
+
   if (buffers[bot].length > 800) buffers[bot].shift();
 
   buildTabs();
-
   if (bot === activeBot) renderLogs();
 }
 
@@ -254,7 +269,9 @@ function startLogStream() {
   if (!logsBox) return;
 
   if (logSource) {
-    try { logSource.close(); } catch {}
+    try {
+      logSource.close();
+    } catch {}
   }
 
   logSource = new EventSource("/api/logs/stream");
@@ -266,18 +283,23 @@ function startLogStream() {
 
       const b = data.buffers || {};
       for (const bot in b) {
-        buffers[bot] = (b[bot] || []).map(formatLog);
+        buffers[bot] = (b[bot] || []).map((x) => ({
+          ts: x.ts,
+          level: x.level || "log",
+          text: String(x.text ?? ""),
+          bot: x.bot || bot
+        }));
       }
 
       if (!buffers.system) buffers.system = [];
 
       if (!buffers[activeBot]) {
-        const keys = Object.keys(buffers).filter(k => k !== "system");
+        const keys = Object.keys(buffers).filter((k) => k !== "system");
         activeBot = keys[0] || "system";
       }
 
       buildTabs();
-      ensureCmdBots(Object.keys(buffers).filter(k => k !== "system"));
+      ensureCmdBots(Object.keys(buffers).filter((k) => k !== "system"));
       renderLogs();
     } catch {}
   });
@@ -333,13 +355,14 @@ async function leaveBot(name) {
 function ensureCmdBots(names) {
   if (!cmdBotSelect) return;
 
-  const unique = Array.from(new Set(names)).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const unique = Array.from(new Set(names))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
 
   const current = cmdBotSelect.value;
 
   cmdBotSelect.innerHTML = "";
 
-  // Always include active bot if it exists
   for (const n of unique) {
     const opt = document.createElement("option");
     opt.value = n;
@@ -349,49 +372,120 @@ function ensureCmdBots(names) {
 
   // Pick activeBot if it’s a real bot, otherwise first option
   const canUseActive = unique.includes(activeBot);
-  cmdBotSelect.value = canUseActive ? activeBot : (current && unique.includes(current) ? current : (unique[0] || ""));
+  cmdBotSelect.value = canUseActive
+    ? activeBot
+    : current && unique.includes(current)
+    ? current
+    : unique[0] || "";
+}
+
+function pushCmdHistory(text) {
+  const t = String(text || "").trim();
+  if (!t) return;
+
+  // avoid duplicates if user spams enter
+  const last = cmdHistory.length ? cmdHistory[cmdHistory.length - 1] : "";
+  if (last === t) return;
+
+  cmdHistory.push(t);
+  if (cmdHistory.length > 200) cmdHistory.shift();
+
+  try {
+    localStorage.setItem(LS_CMD_HISTORY, JSON.stringify(cmdHistory));
+  } catch {}
+}
+
+function resetHistoryBrowse() {
+  cmdHistIndex = -1;
+  cmdDraft = "";
+}
+
+function applyHistoryAt(index) {
+  if (!cmdInput) return;
+  if (index < 0 || index >= cmdHistory.length) return;
+
+  cmdInput.value = cmdHistory[index];
+  // put caret at end
+  queueMicrotask(() => {
+    try {
+      cmdInput.setSelectionRange(cmdInput.value.length, cmdInput.value.length);
+    } catch {}
+  });
 }
 
 async function sendPanelCmd() {
   if (!cmdInput || !cmdBotSelect) return;
 
-  const botName = String(cmdBotSelect.value || "").trim();
   const text = String(cmdInput.value || "").trim();
+  if (!text) return;
 
-  if (!botName) {
+  const sendAll = !!(sendAllToggle && sendAllToggle.checked);
+  const botName = String(cmdBotSelect.value || "").trim();
+
+  if (!sendAll && !botName) {
     if (cmdMsg) cmdMsg.textContent = "Pick a bot first.";
     return;
   }
-  if (!text) return;
 
   if (cmdMsg) cmdMsg.textContent = "";
-
   cmdSendBtn && (cmdSendBtn.disabled = true);
 
   try {
-    const res = await fetch(`/api/mc/${encodeURIComponent(botName)}/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text })
-    });
+    if (sendAll) {
+      // hit broadcast endpoint (fast + consistent)
+      const res = await fetch(`/api/mc/sendAll`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
 
-    const out = await res.json().catch(() => ({}));
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || out.ok === false) {
+        if (cmdMsg) cmdMsg.textContent = out.error || "Broadcast failed";
+        return;
+      }
 
-    if (!res.ok || out.ok === false) {
-      if (cmdMsg) cmdMsg.textContent = out.error || "Send failed";
-      return;
+      const results = out.results || {};
+      const names = Object.keys(results);
+      const queued = names.filter((n) => results[n]?.queued).length;
+      const failed = names.filter((n) => results[n]?.ok === false).length;
+
+      if (cmdMsg) {
+        if (failed > 0) cmdMsg.textContent = `Broadcast sent. (${failed} failed, ${queued} queued)`;
+        else if (queued > 0) cmdMsg.textContent = `Broadcast sent. (${queued} queued)`;
+        else cmdMsg.textContent = "Broadcast sent.";
+      }
+    } else {
+      // single bot send
+      const res = await fetch(`/api/mc/${encodeURIComponent(botName)}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+
+      const out = await res.json().catch(() => ({}));
+
+      if (!res.ok || out.ok === false) {
+        if (cmdMsg) cmdMsg.textContent = out.error || "Send failed";
+        return;
+      }
+
+      if (cmdMsg) cmdMsg.textContent = out.queued ? "Queued (bot not ready yet)." : "Sent.";
+
+      // switch console to that bot
+      activeBot = botName;
+      buildTabs();
+      renderLogs();
     }
 
-    if (cmdMsg) cmdMsg.textContent = out.queued ? "Queued (bot not ready yet)." : "Sent.";
+    // history + clear
+    pushCmdHistory(text);
+    resetHistoryBrowse();
+
     cmdInput.value = "";
     cmdInput.focus();
-
-    // switch console to that bot
-    activeBot = botName;
-    buildTabs();
-    renderLogs();
-  } catch (e) {
-    if (cmdMsg) cmdMsg.textContent = "Send failed";
+  } catch {
+    if (cmdMsg) cmdMsg.textContent = sendAll ? "Broadcast failed" : "Send failed";
   } finally {
     cmdSendBtn && (cmdSendBtn.disabled = false);
   }
@@ -404,7 +498,89 @@ if (cmdInput) {
     if (e.key === "Enter") {
       e.preventDefault();
       sendPanelCmd();
+      return;
     }
+
+    // terminal-like history browsing
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      // If user is in the middle of text, still allow (like terminals),
+      // but prevent cursor movement.
+      e.preventDefault();
+
+      if (!cmdHistory.length) return;
+
+      // first time entering history browse: save draft
+      if (cmdHistIndex === -1) {
+        cmdDraft = cmdInput.value;
+        cmdHistIndex = cmdHistory.length; // one past end (draft position)
+      }
+
+      if (e.key === "ArrowUp") {
+        cmdHistIndex = Math.max(0, cmdHistIndex - 1);
+        applyHistoryAt(cmdHistIndex);
+      } else {
+        // ArrowDown
+        cmdHistIndex = Math.min(cmdHistory.length, cmdHistIndex + 1);
+        if (cmdHistIndex === cmdHistory.length) {
+          // back to draft
+          cmdInput.value = cmdDraft;
+          queueMicrotask(() => {
+            try {
+              cmdInput.setSelectionRange(cmdInput.value.length, cmdInput.value.length);
+            } catch {}
+          });
+        } else {
+          applyHistoryAt(cmdHistIndex);
+        }
+      }
+    }
+  });
+
+  cmdInput.addEventListener("input", () => {
+    // if user types while browsing history, exit history mode (like many shells)
+    if (cmdHistIndex !== -1) resetHistoryBrowse();
+  });
+}
+
+/* =========================
+   Toggle wiring
+========================= */
+
+function loadToggleState() {
+  try {
+    if (chatOnlyToggle) chatOnlyToggle.checked = localStorage.getItem(LS_CHAT_ONLY) === "1";
+    if (sendAllToggle) sendAllToggle.checked = localStorage.getItem(LS_SEND_ALL) === "1";
+  } catch {}
+}
+
+function saveToggleState() {
+  try {
+    if (chatOnlyToggle) localStorage.setItem(LS_CHAT_ONLY, chatOnlyToggle.checked ? "1" : "0");
+    if (sendAllToggle) localStorage.setItem(LS_SEND_ALL, sendAllToggle.checked ? "1" : "0");
+  } catch {}
+}
+
+function loadCmdHistory() {
+  try {
+    const raw = localStorage.getItem(LS_CMD_HISTORY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) cmdHistory = arr.map((x) => String(x)).filter(Boolean).slice(-200);
+  } catch {}
+}
+
+if (chatOnlyToggle) {
+  chatOnlyToggle.addEventListener("change", () => {
+    saveToggleState();
+    renderLogs();
+  });
+}
+
+if (sendAllToggle) {
+  sendAllToggle.addEventListener("change", () => {
+    saveToggleState();
+    // optional UX: when send-all is enabled, keep selection but don't force-sync it
+    if (cmdMsg) cmdMsg.textContent = sendAllToggle.checked ? "Broadcast mode ON" : "";
   });
 }
 
@@ -432,6 +608,9 @@ function escapeAttr(s) {
 setInterval(() => {
   loadStatus().catch(() => {});
 }, 3000);
+
+loadToggleState();
+loadCmdHistory();
 
 startLogStream();
 loadStatus().catch(() => {});
