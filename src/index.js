@@ -46,11 +46,92 @@ async function main() {
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
 
+  // ==========================
+  // Live log bus (SSE)
+  // ==========================
+  const LOG_MAX = Number(process.env.PANEL_LOG_MAX || 300);
+  const logBuffer = [];
+  const logClients = new Set();
+
+  function pushLog(level, parts) {
+    const text = parts
+      .map((p) => {
+        if (p instanceof Error) return p.stack || p.message;
+        if (typeof p === "string") return p;
+        try {
+          return JSON.stringify(p);
+        } catch {
+          return String(p);
+        }
+      })
+      .join(" ");
+
+    const entry = {
+      ts: Date.now(),
+      level,
+      text
+    };
+
+    logBuffer.push(entry);
+    while (logBuffer.length > LOG_MAX) logBuffer.shift();
+
+    const payload = `event: log\ndata: ${JSON.stringify(entry)}\n\n`;
+    for (const res of logClients) {
+      try {
+        res.write(payload);
+      } catch {}
+    }
+  }
+
+  // Patch console so your CMD logs also appear in the panel
+  const _log = console.log.bind(console);
+  const _warn = console.warn.bind(console);
+  const _error = console.error.bind(console);
+
+  console.log = (...args) => {
+    _log(...args);
+    pushLog("log", args);
+  };
+  console.warn = (...args) => {
+    _warn(...args);
+    pushLog("warn", args);
+  };
+  console.error = (...args) => {
+    _error(...args);
+    pushLog("error", args);
+  };
+
+  // Recent logs (buffer)
+  app.get("/api/logs", (req, res) => {
+    res.json({ logs: logBuffer });
+  });
+
+  // Live log stream (SSE)
+  app.get("/api/logs/stream", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    // Send buffer on connect
+    res.write(`event: init\ndata: ${JSON.stringify({ logs: logBuffer })}\n\n`);
+
+    logClients.add(res);
+
+    req.on("close", () => {
+      logClients.delete(res);
+    });
+  });
+
+  // ==========================
+  // Serve panel UI
+  // ==========================
   const panelPublic = path.join(process.cwd(), "minecord-panel", "public");
   app.use("/", express.static(panelPublic));
 
   app.get("/api/health", (req, res) => res.json({ ok: true }));
 
+  // Read/write ROOT bots.json
   app.get("/api/bots", (req, res) => {
     try {
       const p = path.join(process.cwd(), "bots.json");
@@ -96,7 +177,6 @@ async function main() {
       mcBots: [{ cfg: { name: "default", channelId }, mc }]
     });
 
-    // Simple status for single mode
     app.get("/api/status", (req, res) => {
       res.json({
         default: {
@@ -120,7 +200,7 @@ async function main() {
     return;
   }
 
-  // ---- MULTI MODE (per-bot control) ----
+  // ---- MULTI MODE ----
   const cfgByName = new Map();
   for (const cfg of bots) {
     const name = String(cfg?.name || "").trim();
@@ -207,7 +287,6 @@ async function main() {
     return out;
   }
 
-  // Boot behavior: start bots unless enabled === false
   console.log(`[MineCord] Loaded ${cfgByName.size} bot(s) from bots.json.`);
   const names = Array.from(cfgByName.keys());
 
@@ -215,9 +294,10 @@ async function main() {
     const name = names[i];
     const cfg = cfgByName.get(name);
 
-    const enabled = cfg.enabled !== false; // default true
-    ensureInstance(name); // create but do not connect yet
+    // Always create instances, but DO NOT connect until enabled or panel says Join
+    ensureInstance(name);
 
+    const enabled = cfg.enabled !== false; // default true
     if (!enabled) {
       console.log(`[MineCord] Bot disabled on boot: ${name}`);
       continue;
@@ -227,7 +307,6 @@ async function main() {
     await startBot(name, { stagger: i !== 0 });
   }
 
-  // Bridge uses the instances
   createMultiBridge({
     discord,
     mcBots: Array.from(mcByName.values())
@@ -235,7 +314,6 @@ async function main() {
 
   console.log(`[MineCord] Multi mode ready. Use the panel to Join/Leave bots individually.`);
 
-  // Panel endpoints
   app.get("/api/status", (req, res) => res.json(statusAll()));
 
   app.post("/api/start/:name", async (req, res) => {
