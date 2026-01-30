@@ -1,3 +1,4 @@
+// index.js
 require("dotenv").config();
 
 const fs = require("fs");
@@ -40,6 +41,20 @@ function loadBotsIfPresent() {
   }
 
   return json.bots;
+}
+
+const os = require("os");
+
+function getLanIp() {
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family === "IPv4" && !net.internal) return net.address;
+      }
+    }
+  } catch {}
+  return "YOUR_LAN_IP";
 }
 
 /* =========================
@@ -186,10 +201,13 @@ async function main() {
   });
 
   const PORT = Number(process.env.PANEL_PORT || 3000);
-  app.listen(PORT, () => {
-    console.log(`[MineCord] Panel at http://localhost:${PORT}`);
-    console.log(`[MineCord] Serving UI from: ${panelPublic}`);
-  });
+const HOST = process.env.PANEL_HOST || "0.0.0.0";
+app.listen(PORT, HOST, () => {
+  console.log(`[MineCord] Panel at http://localhost:${PORT}`);
+  console.log(`[MineCord] Panel on LAN: http://${getLanIp()}:${PORT}`);
+  console.log(`[MineCord] Serving UI from: ${panelPublic}`);
+});
+
 
   /* =========================
      SINGLE MODE
@@ -240,13 +258,27 @@ async function main() {
       res.json({ ok: true });
     });
 
-    // ✅ NEW: send chat/cmd from panel
+    // Send chat/cmd from panel (single)
     app.post("/api/mc/:name/send", (req, res) => {
       const text = String(req.body?.text || "").trim();
       if (!text) return res.status(400).json({ ok: false, error: "Missing text" });
 
       const r = mc.sendChat(text);
       res.json({ ok: !!r.ok, queued: !!r.queued, error: r.error || "" });
+    });
+
+    // Broadcast (single just sends to default)
+    app.post("/api/mc/sendAll", (req, res) => {
+      const text = String(req.body?.text || "").trim();
+      if (!text) return res.status(400).json({ ok: false, error: "Missing text" });
+
+      const r = mc.sendChat(text);
+      res.json({
+        ok: true,
+        results: {
+          default: { ok: !!r.ok, queued: !!r.queued, error: r.error || "" }
+        }
+      });
     });
 
     console.log("[MineCord] Started (single mode).");
@@ -394,7 +426,7 @@ async function main() {
     res.json(stopBot(name));
   });
 
-  // ✅ NEW: send chat/cmd from panel
+  // Send chat/cmd from panel
   app.post("/api/mc/:name/send", (req, res) => {
     const name = String(req.params.name || "").trim();
     const entry = mcByName.get(name) || ensureInstance(name);
@@ -405,6 +437,25 @@ async function main() {
 
     const r = entry.mc.sendChat(text);
     res.json({ ok: !!r.ok, queued: !!r.queued, error: r.error || "" });
+  });
+
+  // ✅ NEW: broadcast endpoint (panel "Send to all bots")
+  app.post("/api/mc/sendAll", (req, res) => {
+    const text = String(req.body?.text || "").trim();
+    if (!text) return res.status(400).json({ ok: false, error: "Missing text" });
+
+    const results = {};
+    for (const name of cfgByName.keys()) {
+      const entry = mcByName.get(name) || ensureInstance(name);
+      if (!entry) {
+        results[name] = { ok: false, queued: false, error: "Unknown bot" };
+        continue;
+      }
+      const r = entry.mc.sendChat(text);
+      results[name] = { ok: !!r.ok, queued: !!r.queued, error: r.error || "" };
+    }
+
+    res.json({ ok: true, results });
   });
 }
 
